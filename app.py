@@ -40,22 +40,22 @@ query_server_url = "http://%s/blocks/latest" % QUERY_SERVER
 query_signinfo_url = "http://%s/slashing/validators/%s/signing_info" % (QUERY_SERVER, VALIDATOR_CONSPK)
 
 
-@app.schedule(Rate(120, unit=Rate.MINUTES))
+@app.schedule(Rate(60, unit=Rate.MINUTES))
 def check_and_report_even_ok(event):
 #@app.route("/")
 #def check_and_report_even_ok():
-    return check_node_status(also_report_ok = True)
+    return check_node_status(also_report_ok = True, missing_block_threshold = 0)
 
 
 @app.schedule(Rate(10, unit=Rate.MINUTES))
 def check_and_report(event):
-    return check_node_status(also_report_ok = False)
+    return check_node_status(also_report_ok = False, missing_block_threshold = 1200)
 
 
-def check_node_status(also_report_ok):
+def check_node_status(also_report_ok, missing_block_threshold):
     r = get_latest_block()
     if r.status_code == 200:
-        return check_and_notify(r, also_report_ok)
+        return check_and_notify(r, also_report_ok, missing_block_threshold)
     else:
         return notify("fetch node status failed. %d" % r.status_code)
 
@@ -65,7 +65,7 @@ def get_latest_block():
     return requests.get(query_server_url, headers=headers)
 
 
-def check_and_notify(r, also_report_ok):
+def check_and_notify(r, also_report_ok, missing_block_threshold):
     msg = ""
     block = json.loads(r.content)
 
@@ -75,12 +75,29 @@ def check_and_notify(r, also_report_ok):
 
     if is_node_participates_consensus(block, VALIDATOR_ADDR):
         if also_report_ok:
-            msg += "Has precommits. participating consensus.\n"
+            msg += "`Precommits OK:` %s is participating consensus.\n" % VALIDATOR_ADDR
     else:
-        msg += "WARNING: miss precommits of validator %s.\n" % VALIDATOR_ADDR
+        msg += "`WARNING:` miss precommits of validator %s.\n" % VALIDATOR_ADDR
+
+    msg += check_missed_blocks(missing_block_threshold)
 
     if msg != "":
         notify(height_info + "\n" + msg)
+
+
+def check_missed_blocks(missing_block_threshold):
+    headers = {'accept': 'application/json'}
+    r = requests.get(query_signinfo_url, headers=headers)
+    if r.status_code == 200:
+        info = json.loads(r.content)
+        missed_count = int(info['result']['missed_blocks_counter'])
+
+        if missed_count > missing_block_threshold:
+            return "`WARNING`: missing %d blocks" % missed_count
+        else:
+            return ""
+    else:
+        return "fetch node signing_info failed. %d\n" % r.status_code
 
 
 def check_block_time_far_from_now(block):
@@ -91,7 +108,7 @@ def check_block_time_far_from_now(block):
     delay = now_tval - block_tval
 
     if delay > LATEST_BLOCK_TOO_OLD_WARNING_THRESHOLD_SECONDS:
-        return "ERROR: highest block time:%s too far from now, %d seconds late.\n" % (block_time, delay)
+        return "`ERROR:` highest block time:%s too far from now, %d seconds late.\n" % (block_time, delay)
 
     return ""
 
@@ -99,15 +116,15 @@ def check_block_time_far_from_now(block):
 def get_height_info(block):
     chain_id = block['block']['header']['chain_id']
     height = block['block']['header']['height']
-    height_info = "chain_id: %s, height: %s" % (chain_id, height)
+    height_info = "[chain_id: %s, height: %s]" % (chain_id, height)
     return height_info
 
 
 def is_node_participates_consensus(block, vaddr):
     last_pre_commits = block['block']['last_commit']['precommits']
     for pre_commit in last_pre_commits:
-        if pre_commit['validator_address'] == vaddr and pre_commit['type'] == 2:
-            return True
+         if pre_commit is not None and pre_commit['validator_address'] == vaddr and pre_commit['type'] == 2:
+             return True
 
     return False
 
