@@ -1,8 +1,16 @@
+import time
+from datetime import datetime
+
+import dateutil
+import dateutil.parser
 from chalice import Chalice, Rate
 import requests
 import json
 
 ################################################################################
+# how to start rest-server?
+# ./cetcli rest-server --chain-id=coinexdex --laddr=tcp://0.0.0.0:1317 --node tcp://localhost:26657 --trust-node=true --swagger-host=3.105.193.191:1317 --default-http > cli.log
+#
 # REST API server to query chain states
 # e.g.: QUERY_SERVER = "18.190.80.148:1317"
 QUERY_SERVER = "TODO_FILL_REST_SERVER_TO_QUERY:1317"
@@ -20,6 +28,9 @@ VALIDATOR_ADDR = "TODO___FILL_YOUR_VALIDATOR_ADDR"
 # ./cetd tendermint show-validator
 # e.g.: VALIDATOR_CONSPK = "cettestvalconspub1zcjduepqmt3aqqy3hcvm0wv8t3540cvdpy7h2258xamj7zscm3u875pgtg5qg2cpvv"
 VALIDATOR_CONSPK = "TODO__FILL_YOUR_VALIDATOR_CONSENSUS_PUBLIB_KEY_HERE"
+
+# warning when highest block is too old from now
+LATEST_BLOCK_TOO_OLD_WARNING_THRESHOLD_SECONDS = 120
 ################################################################################
 
 
@@ -29,8 +40,10 @@ query_server_url = "http://%s/blocks/latest" % QUERY_SERVER
 query_signinfo_url = "http://%s/slashing/validators/%s/signing_info" % (QUERY_SERVER, VALIDATOR_CONSPK)
 
 
-@app.schedule(Rate(240, unit=Rate.MINUTES))
+@app.schedule(Rate(120, unit=Rate.MINUTES))
 def check_and_report_even_ok(event):
+#@app.route("/")
+#def check_and_report_even_ok():
     return check_node_status(also_report_ok = True)
 
 
@@ -53,18 +66,34 @@ def get_latest_block():
 
 
 def check_and_notify(r, also_report_ok):
+    msg = ""
     block = json.loads(r.content)
 
     height_info = get_height_info(block)
 
+    msg += check_block_time_far_from_now(block)
+
     if is_node_participates_consensus(block, VALIDATOR_ADDR):
         if also_report_ok:
-            return notify("Has precommits. %s" % height_info)
-        else:
-            return 200
+            msg += "Has precommits. participating consensus.\n"
+    else:
+        msg += "WARNING: miss precommits of validator %s.\n" % VALIDATOR_ADDR
 
-    warning_msg = "WARNING: Do not has precommits of validator %s. %s" % (VALIDATOR_ADDR, height_info)
-    return notify(warning_msg)
+    if msg != "":
+        notify(height_info + "\n" + msg)
+
+
+def check_block_time_far_from_now(block):
+    block_time = block['block']['header']['time']
+    block_tval = time.mktime(dateutil.parser.parse(block_time).timetuple())
+
+    now_tval = time.mktime(datetime.utcnow().timetuple())
+    delay = now_tval - block_tval
+
+    if delay > LATEST_BLOCK_TOO_OLD_WARNING_THRESHOLD_SECONDS:
+        return "ERROR: highest block time:%s too far from now, %d seconds late.\n" % (block_time, delay)
+
+    return ""
 
 
 def get_height_info(block):
