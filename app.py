@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import time
 from datetime import datetime
 
@@ -44,20 +47,24 @@ query_signinfo_url = "http://%s/slashing/validators/%s/signing_info" % (QUERY_SE
 def check_and_report_even_ok(event):
 #@app.route("/")
 #def check_and_report_even_ok():
+@app.schedule(Rate(30, unit=Rate.MINUTES))
+def check_and_report_even_ok(event):
     return check_node_status(also_report_ok = True, missing_block_threshold = 0)
 
 
 @app.schedule(Rate(10, unit=Rate.MINUTES))
 def check_and_report(event):
-    return check_node_status(also_report_ok = False, missing_block_threshold = 1200)
-
+    return check_node_status(also_report_ok = False, missing_block_threshold = 100)
 
 def check_node_status(also_report_ok, missing_block_threshold):
-    r = get_latest_block()
-    if r.status_code == 200:
-        return check_and_notify(r, also_report_ok, missing_block_threshold)
-    else:
-        return notify("fetch node status failed. %d" % r.status_code)
+    try:
+        r = get_latest_block()
+        if r.status_code == 200:
+            return check_and_notify(r, also_report_ok, missing_block_threshold)
+        else:
+            return notify("fetch node status failed. %d" % r.status_code)
+    except Exception as e:
+        return notify("exception occurred: %s" % str(e))
 
 
 def get_latest_block():
@@ -75,14 +82,14 @@ def check_and_notify(r, also_report_ok, missing_block_threshold):
 
     if is_node_participates_consensus(block, VALIDATOR_ADDR):
         if also_report_ok:
-            msg += "`Precommits OK:` %s is participating consensus.\n" % VALIDATOR_ADDR
+            msg += "`cons OK:` %s\n" % VALIDATOR_ADDR[:5]
     else:
-        msg += "`WARNING:` miss precommits of validator %s.\n" % VALIDATOR_ADDR
+        msg += "`WARNING:` miss precommits of validator %s.\n" % VALIDATOR_ADDR[:10]
 
     msg += check_missed_blocks(missing_block_threshold)
 
     if msg != "":
-        notify(height_info + "\n" + msg)
+        notify(msg + height_info)
 
 
 def check_missed_blocks(missing_block_threshold):
@@ -114,9 +121,9 @@ def check_block_time_far_from_now(block):
 
 
 def get_height_info(block):
-    chain_id = block['block']['header']['chain_id']
+    #chain_id = block['block']['header']['chain_id']
     height = block['block']['header']['height']
-    height_info = "[chain_id: %s, height: %s]" % (chain_id, height)
+    height_info = "`[%s]` " % height
     return height_info
 
 
